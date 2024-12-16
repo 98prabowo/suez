@@ -45,7 +45,7 @@ impl Worker {
 }
 
 #[cfg(test)]
-mod worker_tests {
+mod tests {
     use std::{sync::mpsc::channel, time::Duration};
 
     use super::*;

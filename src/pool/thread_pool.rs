@@ -70,7 +70,7 @@ impl Drop for ThreadPool {
 }
 
 #[cfg(test)]
-mod threadpool_tests {
+mod tests {
     use std::time::Duration;
 
     use super::*;

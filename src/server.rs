@@ -1,26 +1,22 @@
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr, TcpListener},
-    sync::{Arc, Mutex},
-};
+use std::net::{IpAddr, SocketAddr, TcpListener};
 
 use crate::{
     controller::Controller, 
     error::Result, 
-    model::AtomicDB, 
+    model::AtomicDb, 
     pool::ThreadPool,
 };
 
 pub struct Server {
     addr: SocketAddr,
-    db: AtomicDB,
+    db: AtomicDb,
 }
 
 impl Server {
     pub fn init(addr: IpAddr, port: u16) -> Self {
         Self {
             addr: SocketAddr::new(addr, port),
-            db: Arc::new(Mutex::new(HashMap::new())),
+            db: AtomicDb::new(),
         }
     }
 
@@ -30,7 +26,7 @@ impl Server {
 
         for stream in listener.incoming() {
             if let Ok(mut stream) = stream {
-                let db = Arc::clone(&self.db);
+                let db = self.db.clone();
 
                 pool.execute(move || -> Result<()> {
                     Controller::handle_input(&mut stream, db);

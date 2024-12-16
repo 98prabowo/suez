@@ -3,14 +3,14 @@ use std::{
     net::TcpStream, 
 };
 
-use crate::model::{AtomicDB, Command};
+use crate::model::{Command, Db, error::Error};
 
 pub struct Controller;
 
 impl Controller {
     pub fn handle_input(
         stream: &mut TcpStream, 
-        db: AtomicDB
+        db: impl Db 
     ) {
         let buf_reader = BufReader::new(&mut *stream);
 
@@ -23,7 +23,7 @@ impl Controller {
     }
 
     fn handle_cmd(
-        db: AtomicDB,
+        db: impl Db,
         request_line: String
     ) -> String {
         match request_line.parse() {
@@ -35,88 +35,107 @@ impl Controller {
     }
 
     fn handle_get(
-        db: AtomicDB,
+        db: impl Db,
         key: String
     ) -> String {
-        match db.lock() {
-            Ok(db) => {
-                if let Some(value) = db.get(&key) {
-                    format!("{}\n", value)
-                } else {
-                    format!("No value for key: {}\n", key)
-                }
-            }
-            Err(_) => format!("Failed to get data\n"),
+        let mut value: Option<String> = None; 
+
+        match db.with_value(&key, |val| { 
+            value = val.map(|v| format!("{}\n", v) ); 
+        }) {
+            Ok(_)   => value.unwrap_or(format!("No value for key: {}\n", key)),
+            Err(_)  => format!("Failed to get data\n"),
         }
     }
 
     fn handle_set(
-        db: AtomicDB,
+        db: impl Db,
         key: String,
         value: String
     ) -> String {
-        match db.lock() {
-            Ok(mut db) => {
-                if let Some(current_v) = db.get_mut(&key) {
-                    *current_v = value
-                } else { 
-                    db.entry(key).or_insert(value);
-                }
-                "Success entry data\n".into()
-            }
-            Err(_) => "Failed to entry data\n".into(),
+        match db.insert(key, value) {
+            Ok(_)   => format!("Success entry data\n"),
+            Err(_)  => format!("Failed to entry data\n"),
         }
     }
 
     fn handle_del(
-        db: AtomicDB,
+        db: impl Db,
         key: String
     ) -> String {
-        match db.lock() {
-            Ok(mut db) => {
-                if let Some(_) = db.remove(&key) {
-                    format!("Success remove {}\n", key)
-                } else {
-                    format!("No value for key: {}\n", key)
-                }
-            }
-            Err(_) => "Failed to delete data\n".into(),
+        match db.delete(&key) {
+            Ok(_)                   => format!("Success remove {}\n", key),
+            Err(Error::KeyNotFound) => format!("No value for key: {}\n", key),
+            Err(_)                  => format!("Failed to delete data\n"),
+
         }
     }
 }
 
 #[cfg(test)]
-mod controller_tests {
-    use std::{collections::HashMap, sync::{Arc, Mutex}};
-
+mod tests {
     use super::*;
+    use crate::model::error::Result;
 
     #[test]
-    fn get_handler_test() {
+    fn fail_get_value() {
         let (sut, key) = make_sut();
+        let response: String = Controller::handle_get(sut, key);
+        assert_eq!(response, "Failed to get data\n");
+    }
+
+    #[test]
+    fn get_none_value() {
+        let (mut sut, key) = make_sut();
+        sut.set_value_action(Ok(None));
         let response: String = Controller::handle_get(sut, key);
         assert_eq!(response, "No value for key: abc\n");
     }
 
     #[test]
-    fn set_handler_test() {
-        let (sut, key) = make_sut();
-        let _: String = Controller::handle_set(Arc::clone(&sut), key.clone(), "10".into());
-        let response: String = Controller::handle_get(Arc::clone(&sut), key.clone());
+    fn get_value() {
+        let (mut sut, key) = make_sut();
+        sut.set_value_action(Ok(Some("10")));
+        let response: String = Controller::handle_get(sut, key);
         assert_eq!(response, "10\n");
     }
 
     #[test]
-    fn del_handler_test() {
+    fn fail_set_value() {
         let (sut, key) = make_sut();
+        let response: String = Controller::handle_set(sut.clone(), key.clone(), "10".into());
+        assert_eq!(response, "Failed to entry data\n");
+    }
 
-        let _set_value: String = Controller::handle_set(Arc::clone(&sut), key.clone(), "10".into());
-        let response: String = Controller::handle_get(Arc::clone(&sut), key.clone());
-        assert_eq!(response, "10\n");
+    #[test]
+    fn set_value() {
+        let (mut sut, key) = make_sut();
+        sut.set_insert_action(Ok(()));
+        let response: String = Controller::handle_set(sut.clone(), key.clone(), "10".into());
+        assert_eq!(response, "Success entry data\n");
+    }
 
-        let _delete_value: String = Controller::handle_del(Arc::clone(&sut), key.clone());
-        let response: String = Controller::handle_get(Arc::clone(&sut), key.clone());
+    #[test]
+    fn fail_del_value() {
+        let (sut, key) = make_sut();
+        let response: String = Controller::handle_del(sut.clone(), key.clone());
+        assert_eq!(response, "Failed to delete data\n");
+    }
+
+    #[test]
+    fn del_none_value() {
+        let (mut sut, key) = make_sut();
+        sut.set_delete_action(Err(Error::KeyNotFound));
+        let response: String = Controller::handle_del(sut.clone(), key.clone());
         assert_eq!(response, "No value for key: abc\n");
+    }
+
+    #[test]
+    fn del_value() {
+        let (mut sut, key) = make_sut();
+        sut.set_delete_action(Ok(()));
+        let response: String = Controller::handle_del(sut.clone(), key.clone());
+        assert_eq!(response, "Success remove abc\n");
     }
 
     #[test]
@@ -127,9 +146,61 @@ mod controller_tests {
     }
 
     // Helpers
+    
+    #[derive(Debug, Clone)]
+    struct MockDb<'a> {
+        value_action: Result<Option<&'a str>>,
+        insert_action: Result<()>,
+        delete_action: Result<()>,
+    }
 
-    fn make_sut() -> (AtomicDB, String) {
-        let sut: AtomicDB = Arc::new(Mutex::new(HashMap::new()));
+    impl<'a> MockDb<'a> {
+        fn new() -> Self {
+            Self { 
+                value_action: Err(Error::UnknownCommand), 
+                insert_action: Err(Error::UnknownCommand), 
+                delete_action: Err(Error::UnknownCommand),
+            }
+        }
+
+        fn set_value_action(&mut self, action: Result<Option<&'a str>>) {
+            self.value_action = action;
+        }
+
+        fn set_insert_action(&mut self, action: Result<()>) {
+            self.insert_action= action;
+        }
+
+        fn set_delete_action(&mut self, action: Result<()>) {
+            self.delete_action = action;
+        }
+    }
+
+    impl<'a> Db for MockDb<'a> {
+        fn insert(&self, _: String, _: String) -> Result<()> {
+            self.insert_action.clone()
+        }
+
+        fn with_value<C>(&self, _: &str, carrier: C) -> Result<()>
+        where 
+            C: FnOnce(Option<&'a str>) 
+        {
+            match &self.value_action {
+                Ok(value) => {
+                    carrier(*value);
+                    Ok(())
+                },
+                Err(e) => Err(e.clone()),
+            }
+        }
+
+        fn delete(&self, _: &str) -> Result<()> {
+            self.delete_action.clone()
+        }
+    }
+
+    fn make_sut<'a>() -> (MockDb<'a>, String) {
+        let sut = MockDb::new();
         let key: String = String::from("abc");
         (sut, key)
     }

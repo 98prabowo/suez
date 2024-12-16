@@ -1,11 +1,7 @@
 mod command;
-mod error;
+mod db;
 
-use std::{
-    collections::HashMap, 
-    sync::{Arc, Mutex}
-};
+pub mod error;
 
 pub use command::Command;
-
-pub type AtomicDB = Arc<Mutex<HashMap<String, String>>>;
+pub use db::{AtomicDb, Db};

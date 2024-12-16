@@ -36,7 +36,7 @@ impl FromStr for Command {
 }
 
 #[cfg(test)]
-mod command_tests {
+mod tests {
     use super::*;
 
     #[test]

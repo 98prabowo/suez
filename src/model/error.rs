@@ -1,8 +1,11 @@
-#[derive(Debug, PartialEq)]
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     KeyNotFound,
     ValueNotFound,
     UnknownCommand,
+    DbPoisoned,
 }
 
 impl std::fmt::Display for Error {
@@ -11,6 +14,7 @@ impl std::fmt::Display for Error {
             Self::KeyNotFound       => write!(f, "Key not found"),
             Self::ValueNotFound     => write!(f, "Value not found"),
             Self::UnknownCommand    => write!(f, "Unknown command"),
+            Self::DbPoisoned        => write!(f, "Db mutex is poisoned"),
         }
     }
 }
